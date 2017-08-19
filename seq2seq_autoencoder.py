@@ -16,6 +16,9 @@ print("use_cuda: " + str(use_cuda))
 SOS_token = 0
 EOS_token = 1
 
+DIALOG_FILE = \
+    "/home/v2john/documents/datasets/cornell-movie-dialogs-corpus/movie_lines_formatted.txt"
+
 
 class Lang:
     def __init__(self, name):
@@ -24,8 +27,10 @@ class Lang:
         self.word2count = {}
         self.index2word = {0: "SOS", 1: "EOS"}
         self.n_words = 2  # Count SOS and EOS
+        self.sentences = list()
 
     def addSentence(self, sentence):
+        self.sentences.append(sentence)
         for word in sentence.split(' '):
             self.addWord(word)
 
@@ -70,34 +75,12 @@ def normalizeString(s):
 # flag to reverse the pairs.
 #
 
-def readLangs(lang1, lang2, reverse=False):
-    print("Reading lines...")
-
-    # Read the file and split into lines
-    lines = open('data/%s-%s.txt' % (lang1, lang2), encoding='utf-8').\
-        read().strip().split('\n')
-
-    # Split every line into pairs and normalize
-    pairs = [[normalizeString(s) for s in l.split('\t')] for l in lines]
-
-    # Reverse pairs, make Lang instances
-    if reverse:
-        pairs = [list(reversed(p)) for p in pairs]
-        input_lang = Lang(lang2)
-        output_lang = Lang(lang1)
-    else:
-        input_lang = Lang(lang1)
-        output_lang = Lang(lang2)
-
-    return input_lang, output_lang, pairs
-
-
 
 def readSingularText():
     print("Reading lines...")
 
     # Read the file and split into lines
-    lines = open('data/dev-full.txt', encoding='utf-8').read().strip().split('\n')
+    lines = open(DIALOG_FILE, encoding='utf-8').read().strip().split('\n')
 
     normalized_lines = [normalizeString(l) for l in lines]
 
@@ -195,7 +178,7 @@ class AttnDecoderRNN(nn.Module):
         self.gru = nn.GRU(self.hidden_size, self.hidden_size)
         self.out = nn.Linear(self.hidden_size, self.output_size)
 
-    def forward(self, input, hidden, encoder_output, encoder_outputs):
+    def forward(self, input, hidden, encoder_outputs):
         embedded = self.embedding(input).view(1, 1, -1)
         embedded = self.dropout(embedded)
 
@@ -263,29 +246,6 @@ def variablesFromPair(pair):
 ######################################################################
 # Training the Model
 # ------------------
-#
-# To train we run the input sentence through the encoder, and keep track
-# of every output and the latest hidden state. Then the decoder is given
-# the ``<SOS>`` token as its first input, and the last hidden state of the
-# encoder as its first hidden state.
-#
-# "Teacher forcing" is the concept of using the real target outputs as
-# each next input, instead of using the decoder's guess as the next input.
-# Using teacher forcing causes it to converge faster but `when the trained
-# network is exploited, it may exhibit
-# instability <http://minds.jacobs-university.de/sites/default/files/uploads/papers/ESNTutorialRev.pdf>`__.
-#
-# You can observe outputs of teacher-forced networks that read with
-# coherent grammar but wander far from the correct translation -
-# intuitively it has learned to represent the output grammar and can "pick
-# up" the meaning once the teacher tells it the first few words, but it
-# has not properly learned how to create the sentence from the translation
-# in the first place.
-#
-# Because of the freedom PyTorch's autograd gives us, we can randomly
-# choose to use teacher forcing or not with a simple if statement. Turn
-# ``teacher_forcing_ratio`` up to use more of it.
-#
 
 teacher_forcing_ratio = 0.5
 
@@ -325,7 +285,7 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer,
         # Teacher forcing: Feed the target as the next input
         for di in range(target_length):
             decoder_output, decoder_hidden, decoder_attention = decoder(
-                decoder_input, decoder_hidden, encoder_output, encoder_outputs)
+                decoder_input, decoder_hidden, encoder_outputs)
             loss += criterion(decoder_output, target_variable[di])
             decoder_input = target_variable[di]  # Teacher forcing
 
@@ -333,7 +293,7 @@ def train(input_variable, target_variable, encoder, decoder, encoder_optimizer,
         # Without teacher forcing: use its own predictions as the next input
         for di in range(target_length):
             decoder_output, decoder_hidden, decoder_attention = decoder(
-                decoder_input, decoder_hidden, encoder_output, encoder_outputs)
+                decoder_input, decoder_hidden, encoder_outputs)
             topv, topi = decoder_output.data.topk(1)
             ni = topi[0][0]
             
@@ -420,30 +380,6 @@ def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=100, lear
             plot_losses.append(plot_loss_avg)
             plot_loss_total = 0
 
-    # showPlot(plot_losses)
-
-
-######################################################################
-# Plotting results
-# ----------------
-#
-# Plotting is done with matplotlib, using the array of loss values
-# ``plot_losses`` saved while training.
-#
-
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-import numpy as np
-
-
-def showPlot(points):
-    plt.figure()
-    fig, ax = plt.subplots()
-    # this locator puts ticks at regular intervals
-    loc = ticker.MultipleLocator(base=0.2)
-    ax.yaxis.set_major_locator(loc)
-    plt.plot(points)
-
 
 ######################################################################
 # Evaluation
@@ -483,7 +419,7 @@ def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
 
     for di in range(max_length):
         decoder_output, decoder_hidden, decoder_attention = decoder(
-            decoder_input, decoder_hidden, encoder_output, encoder_outputs)
+            decoder_input, decoder_hidden, encoder_outputs)
         decoder_attentions[di] = decoder_attention.data
         topv, topi = decoder_output.data.topk(1)
         ni = topi[0][0]
@@ -497,22 +433,6 @@ def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
         decoder_input = decoder_input.cuda() if use_cuda else decoder_input
 
     return decoded_words, decoder_attentions[:di + 1]
-
-
-######################################################################
-# We can evaluate random sentences from the training set and print out the
-# input, target, and output to make some subjective quality judgements:
-#
-
-def evaluateRandomly(encoder, decoder, n=10):
-    for i in range(n):
-        pair = random.choice(pairs)
-        print('>', pair[0])
-        print('=', pair[1])
-        output_words, attentions = evaluate(encoder, decoder, pair[0])
-        output_sentence = ' '.join(output_words)
-        print('<', output_sentence)
-        print('')
 
 
 ######################################################################
@@ -531,33 +451,6 @@ if use_cuda:
 trainIters(encoder1, attn_decoder1, 10000, print_every=500)
 
 ######################################################################
-#
-
-evaluateRandomly(encoder1, attn_decoder1)
-
-
-######################################################################
-# Visualizing Attention
-# ---------------------
-#
-
-def showAttention(input_sentence, output_words, attentions):
-    # Set up figure with colorbar
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    cax = ax.matshow(attentions.numpy(), cmap='bone')
-    fig.colorbar(cax)
-
-    # Set up axes
-    ax.set_xticklabels([''] + input_sentence.split(' ') +
-                       ['<EOS>'], rotation=90)
-    ax.set_yticklabels([''] + output_words)
-
-    # Show label at every tick
-    ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
-    ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
-
-    plt.show()
 
 
 def evaluateAndShowAttention(input_sentence):
@@ -568,10 +461,5 @@ def evaluateAndShowAttention(input_sentence):
     # showAttention(input_sentence, output_words, attentions)
 
 
-# evaluateAndShowAttention("elle a cinq ans de moins que moi .")
-
-# evaluateAndShowAttention("elle est trop petit .")
-
-# evaluateAndShowAttention("je ne crains pas de mourir .")
-
-# evaluateAndShowAttention("c est un jeune directeur plein de talent .")
+for sentence in input_lang.sentences:
+    evaluateAndShowAttention(sentence)
