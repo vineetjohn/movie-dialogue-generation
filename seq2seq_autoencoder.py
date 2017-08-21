@@ -64,7 +64,7 @@ def unicodeToAscii(s):
 def normalizeString(s):
     s = unicodeToAscii(s.lower().strip())
     s = re.sub(r"([.!?])", r" \1", s)
-    s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
+    s = re.sub(r"[^a-zA-Z.!?\t]+", r" ", s)
     return s
 
 
@@ -75,7 +75,6 @@ def normalizeString(s):
 # flag to reverse the pairs.
 #
 
-
 def readSingularText():
     print("Reading lines...")
 
@@ -84,7 +83,12 @@ def readSingularText():
 
     normalized_lines = [normalizeString(l) for l in lines]
 
-    pairs = [(l, l) for l in normalized_lines]
+    pairs = list()
+    for l in normalized_lines:
+        split_line = l.split('\t')
+        if len(split_line) == 2:
+            pairs.append(split_line)
+
     input_lang = Lang("source")
     output_lang = Lang("target")
 
@@ -439,7 +443,7 @@ def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
 # Training and Evaluating
 # =======================
 
-hidden_size = 256
+hidden_size = 512
 encoder1 = EncoderRNN(input_lang.n_words, hidden_size)
 attn_decoder1 = AttnDecoderRNN(hidden_size, output_lang.n_words,
                                1, dropout_p=0.1)
